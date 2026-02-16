@@ -1,0 +1,243 @@
+// --- Story data ---
+const STORY = `The sun came up over the hill.
+A little cat sat on the wall.
+The cat saw a bird in the tree.
+The bird sang a happy song.
+The cat wanted to play.
+But the bird flew up high.
+So the cat went home.
+And had a long nap in the sun.
+The end.`;
+
+// --- State ---
+let wordElements = [];
+let normalizedWords = [];
+let currentWordIndex = 0;
+let recognition = null;
+let isListening = false;
+let matchedSpokenCount = 0;
+
+// --- Debug ---
+function debug(msg) {
+  const el = document.getElementById('debug');
+  const time = new Date().toLocaleTimeString();
+  el.textContent = time + ' ' + msg + '\n' + el.textContent.slice(0, 600);
+}
+
+function normalize(word) {
+  return word.toLowerCase().replace(/[^a-z']/g, '');
+}
+
+// --- Initialization ---
+function init() {
+  renderStory();
+  setupControls();
+  checkSpeechSupport();
+}
+
+function renderStory() {
+  const container = document.getElementById('story-container');
+  while (container.firstChild) {
+    container.removeChild(container.firstChild);
+  }
+
+  const lines = STORY.split('\n');
+  wordElements = [];
+  normalizedWords = [];
+
+  lines.forEach((line, lineIdx) => {
+    const words = line.trim().split(/\s+/);
+    words.forEach((word) => {
+      const span = document.createElement('span');
+      span.classList.add('word', 'upcoming');
+      span.textContent = word + ' ';
+      container.appendChild(span);
+      wordElements.push(span);
+      normalizedWords.push(normalize(word));
+    });
+
+    if (lineIdx < lines.length - 1) {
+      const br = document.createElement('span');
+      br.classList.add('sentence-break');
+      container.appendChild(br);
+    }
+  });
+}
+
+// --- Speech Recognition ---
+function checkSpeechSupport() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    document.getElementById('status').textContent = 'Speech recognition not supported. Try Chrome or Safari.';
+    document.getElementById('start-btn').disabled = true;
+    return false;
+  }
+  return true;
+}
+
+function startListening() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return;
+
+  recognition = new SR();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-GB';
+
+  recognition.onstart = () => debug('EVENT: onstart');
+  recognition.onaudiostart = () => debug('EVENT: onaudiostart');
+  recognition.onspeechstart = () => debug('EVENT: onspeechstart');
+
+  recognition.onresult = (event) => {
+    let transcript = '';
+    let isFinal = false;
+
+    for (let i = 0; i < event.results.length; i++) {
+      transcript += event.results[i][0].transcript + ' ';
+      if (event.results[i].isFinal) isFinal = true;
+    }
+
+    debug('RESULT (' + (isFinal ? 'final' : 'interim') + '): "' + transcript.trim() + '"');
+    matchTranscript(transcript);
+  };
+
+  recognition.onerror = (event) => {
+    debug('ERROR: ' + event.error);
+    if (event.error === 'not-allowed') {
+      document.getElementById('status').textContent = 'Microphone access denied.';
+      isListening = false;
+      updateButton();
+    }
+  };
+
+  recognition.onend = () => {
+    debug('EVENT: onend');
+    if (isListening && currentWordIndex < normalizedWords.length) {
+      document.getElementById('status').textContent = 'Recognition paused. Tap "Continue" to resume.';
+      isListening = false;
+      updateButton();
+    }
+  };
+
+  try {
+    recognition.start();
+    isListening = true;
+    matchedSpokenCount = 0;
+    updateButton();
+    document.getElementById('status').textContent = 'Listening... start reading aloud';
+    document.getElementById('reset-btn').style.display = 'inline-block';
+    debug('Called recognition.start()');
+  } catch (e) {
+    debug('START ERROR: ' + e.message);
+  }
+}
+
+function stopListening() {
+  if (recognition) {
+    try { recognition.stop(); } catch (e) { /* ignore */ }
+    recognition = null;
+  }
+  isListening = false;
+  updateButton();
+  document.getElementById('status').textContent = currentWordIndex > 0 ? 'Paused' : '';
+}
+
+function updateButton() {
+  const btn = document.getElementById('start-btn');
+  if (isListening) {
+    btn.textContent = 'Stop';
+    btn.classList.add('listening');
+  } else {
+    btn.textContent = currentWordIndex > 0 ? 'Continue Reading' : 'Start Reading';
+    btn.classList.remove('listening');
+  }
+}
+
+// --- Word Matching ---
+function matchTranscript(transcript) {
+  const spokenWords = transcript.trim().split(/\s+/).map(normalize).filter(w => w.length > 0);
+  if (spokenWords.length === 0) return;
+
+  let newStart = matchedSpokenCount;
+
+  for (let si = newStart; si < spokenWords.length; si++) {
+    const spoken = spokenWords[si];
+
+    const maxSkip = 3;
+    for (let skip = 0; skip < maxSkip && currentWordIndex + skip < normalizedWords.length; skip++) {
+      if (wordsMatch(spoken, normalizedWords[currentWordIndex + skip])) {
+        advanceTo(currentWordIndex + skip + 1);
+        matchedSpokenCount = si + 1;
+        break;
+      }
+    }
+  }
+}
+
+function wordsMatch(spoken, expected) {
+  if (!spoken || !expected) return false;
+  if (spoken === expected) return true;
+  if (expected.length >= 4 && expected.startsWith(spoken) && spoken.length >= 3) return true;
+  if (Math.abs(spoken.length - expected.length) <= 1 && spoken.length >= 2) {
+    let diffs = 0;
+    const maxLen = Math.max(spoken.length, expected.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (spoken[i] !== expected[i]) diffs++;
+      if (diffs > 1) return false;
+    }
+    return diffs <= 1;
+  }
+  return false;
+}
+
+function advanceTo(newIndex) {
+  for (let i = currentWordIndex; i < newIndex && i < wordElements.length; i++) {
+    wordElements[i].classList.remove('upcoming');
+    wordElements[i].classList.add('spoken');
+  }
+  currentWordIndex = newIndex;
+
+  if (currentWordIndex < wordElements.length) {
+    wordElements[currentWordIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  if (currentWordIndex >= wordElements.length) {
+    storyComplete();
+  }
+}
+
+function storyComplete() {
+  stopListening();
+  document.getElementById('status').textContent = '';
+  document.getElementById('start-btn').style.display = 'none';
+
+  const container = document.getElementById('story-container');
+  const msg = document.createElement('div');
+  msg.classList.add('done-message');
+  msg.textContent = 'Well done! You read the whole story!';
+  container.appendChild(msg);
+}
+
+// --- Controls ---
+function setupControls() {
+  document.getElementById('start-btn').addEventListener('click', () => {
+    if (isListening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  });
+
+  document.getElementById('reset-btn').addEventListener('click', () => {
+    stopListening();
+    currentWordIndex = 0;
+    matchedSpokenCount = 0;
+    renderStory();
+    updateButton();
+    document.getElementById('status').textContent = '';
+    document.getElementById('reset-btn').style.display = 'none';
+  });
+}
+
+// --- Go ---
+init();

@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Read Along</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#4a90d9">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Georgia', serif;
+      background: #fdf6e3;
+      color: #3e3e3e;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      color: #4a90d9;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      font-size: 0.95rem;
+      color: #888;
+      margin-bottom: 2rem;
+    }
+
+    #story-container {
+      max-width: 600px;
+      width: 100%;
+      background: white;
+      border-radius: 16px;
+      padding: 2rem;
+      box-shadow: 0 2px 20px rgba(0,0,0,0.08);
+      line-height: 2.4;
+      font-size: 1.5rem;
+      margin-bottom: 2rem;
+    }
+
+    .word {
+      display: inline;
+      padding: 2px 4px;
+      border-radius: 6px;
+      cursor: default;
+      transition: background-color 0.4s ease, color 0.4s ease;
+    }
+
+    .word.spoken {
+      background: #d4edda;
+      color: #2d6a3f;
+    }
+
+    .word.upcoming {
+      color: #3e3e3e;
+    }
+
+    .sentence-break {
+      display: block;
+      height: 0.8rem;
+    }
+
+    #controls {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    #start-btn {
+      background: #4a90d9;
+      color: white;
+      border: none;
+      border-radius: 50px;
+      padding: 1rem 2.5rem;
+      font-size: 1.2rem;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.2s;
+      box-shadow: 0 4px 12px rgba(74, 144, 217, 0.3);
+    }
+
+    #start-btn:hover { background: #3a7bc8; }
+
+    #start-btn.listening {
+      background: #e74c3c;
+      box-shadow: 0 4px 12px rgba(231, 76, 60, 0.3);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 4px 12px rgba(231, 76, 60, 0.3); }
+      50% { box-shadow: 0 4px 24px rgba(231, 76, 60, 0.5); }
+    }
+
+    #status {
+      font-size: 0.9rem;
+      color: #888;
+      min-height: 1.4em;
+    }
+
+    #reset-btn {
+      background: none;
+      border: 1px solid #ccc;
+      border-radius: 50px;
+      padding: 0.5rem 1.5rem;
+      font-size: 0.9rem;
+      color: #888;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    #reset-btn:hover { border-color: #999; color: #666; }
+
+    .done-message {
+      text-align: center;
+      font-size: 1.3rem;
+      color: #4a90d9;
+      margin-top: 1rem;
+      animation: fadeIn 0.5s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <h1>Read Along</h1>
+  <p class="subtitle">Read the story aloud and watch the words light up</p>
+
+  <div id="story-container"></div>
+
+  <div id="controls">
+    <button id="start-btn">Start Reading</button>
+    <p id="status"></p>
+    <button id="reset-btn" style="display:none">Start Over</button>
+  </div>
+
+  <pre id="debug" style="max-width:600px;width:100%;font-size:0.75rem;color:#999;margin-top:1rem;white-space:pre-wrap;word-break:break-all;"></pre>
+
+  <script src="app.js"></script>
+</body>
+</html>
