@@ -120,8 +120,8 @@ function scrollToCenter(el) {
 // --- Pagination (page mode) ---
 function paginate() {
   if (readingMode !== 'page') return;
-  var wrapper = document.getElementById('page-wrapper');
-  var wrapperHeight = wrapper.clientHeight;
+  var container = document.getElementById('story-container');
+  var wrapperHeight = container.clientHeight;
   if (wrapperHeight <= 0) return;
 
   pages = [];
