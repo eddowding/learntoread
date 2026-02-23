@@ -97,6 +97,15 @@ function loadPreferences() {
   if (savedSize !== null) fontSizeIndex = parseInt(savedSize, 10);
 }
 
+// --- Teleprompter scrolling ---
+function scrollToCenter(el) {
+  var wrapper = document.getElementById('page-wrapper');
+  var elRect = el.getBoundingClientRect();
+  var wrapperRect = wrapper.getBoundingClientRect();
+  var targetScroll = wrapper.scrollTop + (elRect.top - wrapperRect.top) - (wrapperRect.height / 2) + (elRect.height / 2);
+  wrapper.scrollTo({ top: targetScroll, behavior: 'smooth' });
+}
+
 // --- Screen navigation ---
 function showScreen(screenId) {
   document.querySelectorAll('.screen').forEach(function(s) {

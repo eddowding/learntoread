@@ -196,6 +196,35 @@
       min-height: 1.4em;
     }
 
+    /* --- Teleprompter mode --- */
+    body.teleprompter-mode #page-wrapper {
+      overflow-y: auto;
+      height: calc(100dvh - 60px - 130px - 50px - 20px);
+      background: #1a1a2e;
+      border-radius: 12px;
+      mask-image: linear-gradient(transparent, black 15%, black 85%, transparent);
+      -webkit-mask-image: linear-gradient(transparent, black 15%, black 85%, transparent);
+    }
+
+    body.teleprompter-mode #story-container {
+      background: transparent;
+      box-shadow: none;
+      color: #e0e0e0;
+    }
+
+    body.teleprompter-mode #page-indicator {
+      display: none;
+    }
+
+    body.teleprompter-mode .word.upcoming {
+      color: #e0e0e0;
+    }
+
+    body.teleprompter-mode .word.spoken {
+      background: rgba(74,144,217,0.3);
+      color: #7ec8e3;
+    }
+
     /* --- Word styles --- */
     .word {
       display: inline;
