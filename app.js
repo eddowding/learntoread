@@ -72,7 +72,8 @@ let recognition = null;
 let isListening = false;
 let matchedSpokenCount = 0;
 
-// --- Pagination state ---
+// --- Mode + Pagination state ---
+let readingMode = 'page'; // 'page' or 'teleprompter'
 let pages = [];
 let currentPage = 0;
 
@@ -94,11 +95,17 @@ function applyFontSize() {
   container.style.fontSize = fs.size;
   container.style.lineHeight = fs.lineHeight;
   localStorage.setItem('readAlong_fontSize', fontSizeIndex);
+  // Re-paginate if in page mode
+  if (readingMode === 'page' && wordElements.length > 0) {
+    requestAnimationFrame(function() { paginate(); });
+  }
 }
 
 function loadPreferences() {
   var savedSize = localStorage.getItem('readAlong_fontSize');
   if (savedSize !== null) fontSizeIndex = parseInt(savedSize, 10);
+  var savedMode = localStorage.getItem('readAlong_mode');
+  if (savedMode) readingMode = savedMode;
 }
 
 // --- Teleprompter scrolling ---
@@ -112,6 +119,7 @@ function scrollToCenter(el) {
 
 // --- Pagination (page mode) ---
 function paginate() {
+  if (readingMode !== 'page') return;
   var wrapper = document.getElementById('page-wrapper');
   var wrapperHeight = wrapper.clientHeight;
   if (wrapperHeight <= 0) return;
@@ -167,7 +175,7 @@ function showPage(pageNum) {
 
 function updatePageIndicator() {
   var indicator = document.getElementById('page-indicator');
-  if (pages.length > 1) {
+  if (readingMode === 'page' && pages.length > 1) {
     indicator.textContent = 'Page ' + (currentPage + 1) + ' of ' + pages.length;
     indicator.style.display = '';
   } else {
@@ -184,6 +192,36 @@ function triggerPageTurn(nextPage) {
     container.classList.add('page-turning-in');
     setTimeout(function() { container.classList.remove('page-turning-in'); }, 300);
   }, 300);
+}
+
+// --- Mode toggle ---
+function toggleMode() {
+  readingMode = readingMode === 'page' ? 'teleprompter' : 'page';
+  applyMode();
+  localStorage.setItem('readAlong_mode', readingMode);
+}
+
+function applyMode() {
+  var btn = document.getElementById('mode-toggle-btn');
+  btn.textContent = readingMode === 'page' ? 'Page' : 'Scroll';
+  btn.title = readingMode === 'page' ? 'Switch to teleprompter' : 'Switch to page mode';
+
+  document.body.classList.toggle('page-mode', readingMode === 'page');
+  document.body.classList.toggle('teleprompter-mode', readingMode === 'teleprompter');
+
+  if (readingMode === 'page') {
+    wordElements.forEach(function(el) { el.style.display = ''; });
+    document.querySelectorAll('.sentence-break').forEach(function(el) { el.style.display = ''; });
+    requestAnimationFrame(function() { paginate(); });
+  } else {
+    wordElements.forEach(function(el) { el.style.display = ''; });
+    document.querySelectorAll('.sentence-break').forEach(function(el) { el.style.display = ''; });
+    pages = [];
+    updatePageIndicator();
+    if (currentWordIndex < wordElements.length) {
+      setTimeout(function() { scrollToCenter(wordElements[currentWordIndex]); }, 100);
+    }
+  }
 }
 
 // --- Screen navigation ---
@@ -231,6 +269,7 @@ function selectStory(story) {
   document.getElementById('reset-btn').style.display = 'none';
   document.getElementById('status').textContent = '';
   showScreen('reading-screen');
+  applyMode();
 }
 
 // --- Initialization ---
@@ -397,14 +436,22 @@ function wordsMatch(spoken, expected) {
 }
 
 function advanceTo(newIndex) {
-  for (let i = currentWordIndex; i < newIndex && i < wordElements.length; i++) {
+  for (var i = currentWordIndex; i < newIndex && i < wordElements.length; i++) {
     wordElements[i].classList.remove('upcoming');
     wordElements[i].classList.add('spoken');
   }
   currentWordIndex = newIndex;
 
   if (currentWordIndex < wordElements.length) {
-    wordElements[currentWordIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (readingMode === 'teleprompter') {
+      scrollToCenter(wordElements[currentWordIndex]);
+    } else if (readingMode === 'page' && pages.length > 0) {
+      // Check if we need to turn the page
+      var page = pages[currentPage];
+      if (currentWordIndex > page.end && currentPage < pages.length - 1) {
+        triggerPageTurn(currentPage + 1);
+      }
+    }
   }
 
   if (currentWordIndex >= wordElements.length) {
@@ -445,6 +492,7 @@ function setupControls() {
     matchedSpokenCount = 0;
     renderStory();
     applyFontSize();
+    applyMode();
     updateButton();
     document.getElementById('status').textContent = '';
     document.getElementById('reset-btn').style.display = 'none';
@@ -457,6 +505,8 @@ function setupControls() {
   document.getElementById('font-up-btn').addEventListener('click', function() {
     if (fontSizeIndex < FONT_SIZES.length - 1) { fontSizeIndex++; applyFontSize(); }
   });
+
+  document.getElementById('mode-toggle-btn').addEventListener('click', toggleMode);
 }
 
 // --- Go ---
