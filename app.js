@@ -70,6 +70,7 @@ let normalizedWords = [];
 let currentWordIndex = 0;
 let recognition = null;
 let isListening = false;
+let matchedSpokenCount = 0;
 
 // --- Mode + Pagination state ---
 let readingMode = 'page'; // 'page' or 'teleprompter'
@@ -260,7 +261,7 @@ function selectStory(story) {
   currentStory = story;
   document.getElementById('story-title').textContent = story.title;
   currentWordIndex = 0;
-
+  matchedSpokenCount = 0;
   renderStory();
   applyFontSize();
   updateButton();
@@ -310,7 +311,6 @@ function renderStory() {
 
 // --- Speech Recognition ---
 let restartCount = 0;
-let lastResultIndex = 0; // track which results we've permanently processed
 
 function checkSpeechSupport() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -329,7 +329,6 @@ function startListening() {
   recognition = new SR();
   recognition.continuous = true;
   recognition.interimResults = true;
-  recognition.maxAlternatives = 3;
   recognition.lang = 'en-GB';
 
   recognition.onstart = () => {
@@ -340,27 +339,16 @@ function startListening() {
   recognition.onspeechstart = () => debug('EVENT: onspeechstart');
 
   recognition.onresult = (event) => {
-    // Process each result segment separately
-    for (let i = lastResultIndex; i < event.results.length; i++) {
-      const result = event.results[i];
-      // Collect words from all alternatives for this segment
-      const allWords = [];
-      for (let a = 0; a < result.length; a++) {
-        const words = result[a].transcript.trim().split(/\s+/).map(normalize).filter(w => w.length > 0);
-        words.forEach(w => { if (allWords.indexOf(w) === -1) allWords.push(w); });
-      }
+    let transcript = '';
+    let isFinal = false;
 
-      if (result.isFinal) {
-        // Permanently match final results
-        debug('FINAL [' + i + ']: "' + result[0].transcript.trim() + '"');
-        matchWordsFromSegment(allWords, true);
-        lastResultIndex = i + 1;
-      } else {
-        // Speculatively match interim results (lookahead)
-        debug('INTERIM [' + i + ']: "' + result[0].transcript.trim() + '"');
-        matchWordsFromSegment(allWords, false);
-      }
+    for (let i = 0; i < event.results.length; i++) {
+      transcript += event.results[i][0].transcript + ' ';
+      if (event.results[i].isFinal) isFinal = true;
     }
+
+    debug('RESULT (' + (isFinal ? 'final' : 'interim') + '): "' + transcript.trim() + '"');
+    matchTranscript(transcript);
   };
 
   recognition.onerror = (event) => {
@@ -379,7 +367,7 @@ function startListening() {
       restartCount++;
       if (restartCount < 10) {
         debug('Auto-restarting (' + restartCount + ')...');
-        lastResultIndex = 0;
+        matchedSpokenCount = 0;
         try { recognition.start(); } catch (e) { debug('Restart failed: ' + e.message); }
       } else {
         document.getElementById('status').textContent = 'Recognition paused. Tap "Continue" to resume.';
@@ -392,8 +380,7 @@ function startListening() {
   try {
     recognition.start();
     isListening = true;
-  
-    lastResultIndex = 0;
+    matchedSpokenCount = 0;
     updateButton();
     document.getElementById('status').textContent = 'Listening... start reading aloud';
     document.getElementById('reset-btn').style.display = 'inline-block';
@@ -425,39 +412,20 @@ function updateButton() {
 }
 
 // --- Word Matching ---
-
-// Common short words that speech API often confuses
-const SHORT_WORD_ALIASES = {
-  'a': ['uh', 'ah', 'er'],
-  'the': ['duh', 'da', 'de'],
-  'i': ['eye', 'ay'],
-  'to': ['two', 'too'],
-  'in': ['inn', 'an'],
-  'it': ['its'],
-  'is': ['as'],
-  'and': ['an', 'end', 'in'],
-  'but': ['butt', 'bat'],
-  'so': ['sew'],
-  'or': ['oar', 'ore'],
-  'had': ['have', 'has'],
-  'her': ['are'],
-  'one': ['won'],
-  'on': ['an']
-};
-
-function matchWordsFromSegment(spokenWords, isFinal) {
+function matchTranscript(transcript) {
+  const spokenWords = transcript.trim().split(/\s+/).map(normalize).filter(w => w.length > 0);
   if (spokenWords.length === 0) return;
 
-  const maxSkip = 5;
+  let newStart = matchedSpokenCount;
 
-  for (let si = 0; si < spokenWords.length; si++) {
+  for (let si = newStart; si < spokenWords.length; si++) {
     const spoken = spokenWords[si];
-    let matched = false;
 
+    const maxSkip = 3;
     for (let skip = 0; skip < maxSkip && currentWordIndex + skip < normalizedWords.length; skip++) {
       if (wordsMatch(spoken, normalizedWords[currentWordIndex + skip])) {
         advanceTo(currentWordIndex + skip + 1);
-        matched = true;
+        matchedSpokenCount = si + 1;
         break;
       }
     }
@@ -466,21 +434,8 @@ function matchWordsFromSegment(spokenWords, isFinal) {
 
 function wordsMatch(spoken, expected) {
   if (!spoken || !expected) return false;
-  // Exact match
   if (spoken === expected) return true;
-  // Short word aliases
-  if (SHORT_WORD_ALIASES[expected]) {
-    if (SHORT_WORD_ALIASES[expected].indexOf(spoken) !== -1) return true;
-  }
-  // Prefix match: spoken is start of expected (e.g. "hap" for "happy")
   if (expected.length >= 4 && expected.startsWith(spoken) && spoken.length >= 3) return true;
-  // Suffix match: spoken ends like expected (e.g. "wanted" heard as "anted")
-  if (expected.length >= 4 && spoken.length >= 3 && expected.endsWith(spoken.slice(-3))) return true;
-  // Contains match for longer words: one contains the other
-  if (spoken.length >= 4 && expected.length >= 4) {
-    if (spoken.indexOf(expected) !== -1 || expected.indexOf(spoken) !== -1) return true;
-  }
-  // Edit distance <= 1 for words of similar length
   if (Math.abs(spoken.length - expected.length) <= 1 && spoken.length >= 2) {
     let diffs = 0;
     const maxLen = Math.max(spoken.length, expected.length);
@@ -489,16 +444,6 @@ function wordsMatch(spoken, expected) {
       if (diffs > 1) return false;
     }
     return diffs <= 1;
-  }
-  // Edit distance <= 2 for longer words (5+ chars)
-  if (spoken.length >= 5 && expected.length >= 5 && Math.abs(spoken.length - expected.length) <= 2) {
-    let diffs = 0;
-    const maxLen = Math.max(spoken.length, expected.length);
-    for (let i = 0; i < maxLen; i++) {
-      if (spoken[i] !== expected[i]) diffs++;
-      if (diffs > 2) return false;
-    }
-    return diffs <= 2;
   }
   return false;
 }
@@ -569,7 +514,7 @@ function setupControls() {
   document.getElementById('reset-btn').addEventListener('click', function() {
     stopListening();
     currentWordIndex = 0;
-  
+    matchedSpokenCount = 0;
     currentPage = 0;
     pages = [];
     renderStory();
