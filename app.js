@@ -474,7 +474,7 @@ function createWebSpeechProvider() {
 }
 
 // --- Deepgram Provider ---
-var DEEPGRAM_WORKER_URL = 'wss://learntoread-speech.ed-dowding.workers.dev';
+var DEEPGRAM_WORKER_URL = 'wss://learntoread-speech.westtytherley.workers.dev';
 
 function createDeepgramProvider() {
   var ws = null;

@@ -1,6 +1,7 @@
 name = "learntoread-speech"
 main = "src/index.js"
 compatibility_date = "2024-12-01"
+account_id = "bf14edfa7ee14d061a4739848af35148"
 
 [vars]
 ALLOWED_ORIGIN = "https://learntoread.eddowding.com"
