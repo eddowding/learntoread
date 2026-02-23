@@ -164,11 +164,11 @@
     #story-title {
       flex-shrink: 0;
       font-family: var(--ui-font);
-      font-size: 1.15rem;
+      font-size: 1.05rem;
       font-weight: 700;
       color: var(--accent);
       text-align: center;
-      padding: 0.2rem 1rem 0.4rem;
+      padding: 0.1rem 1rem 0.25rem;
       width: 100%;
     }
 
@@ -193,28 +193,27 @@
       overflow: hidden;
     }
 
-    /* --- Page indicator --- */
+    /* --- Page indicator (inline in toolbar) --- */
     #page-indicator {
-      flex-shrink: 0;
       font-family: var(--ui-font);
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       font-weight: 500;
       color: #ccc;
-      text-align: center;
-      padding: 0.15rem 0;
-      min-height: 1.2em;
+      white-space: nowrap;
     }
 
-    /* --- Controls (bottom, compact) --- */
+    /* --- Controls (bottom, compact row layout) --- */
     #controls {
       flex-shrink: 0;
       display: flex;
-      flex-direction: column;
+      flex-direction: row;
       align-items: center;
-      gap: 0.4rem;
-      padding: 0.6rem 1rem;
-      padding-bottom: max(0.6rem, calc(0.4rem + var(--safe-bottom)));
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.35rem 1rem;
+      padding-bottom: max(0.35rem, calc(0.25rem + var(--safe-bottom)));
       width: 100%;
+      position: relative;
     }
 
     #start-btn {
@@ -224,9 +223,9 @@
       color: white;
       border: none;
       border-radius: 50px;
-      padding: 0.75rem 2.5rem;
-      min-height: 48px;
-      font-size: 1.05rem;
+      padding: 0.6rem 2rem;
+      min-height: 44px;
+      font-size: 1rem;
       cursor: pointer;
       transition: background 0.15s;
       box-shadow: 0 3px 10px rgba(74, 144, 217, 0.25);
@@ -245,12 +244,19 @@
       50% { box-shadow: 0 3px 20px rgba(231, 76, 60, 0.4); }
     }
 
+    /* Status as overlay above controls */
     #status {
+      position: absolute;
+      bottom: 100%;
+      left: 0;
+      right: 0;
       font-family: var(--ui-font);
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       font-weight: 500;
       color: #aaa;
-      min-height: 1.2em;
+      text-align: center;
+      padding: 0.15rem 0;
+      pointer-events: none;
     }
 
     #reset-btn {
@@ -260,7 +266,7 @@
       border: 1px solid #ddd;
       border-radius: 50px;
       padding: 0.4rem 1.2rem;
-      min-height: 36px;
+      min-height: 44px;
       font-size: 0.8rem;
       color: #aaa;
       cursor: pointer;
@@ -428,11 +434,10 @@
       <div class="toolbar-group">
         <button id="back-btn" class="toolbar-btn" aria-label="Back to stories">&larr;</button>
       </div>
+      <span id="page-indicator"></span>
       <div class="toolbar-group">
         <button id="font-down-btn" class="toolbar-btn" aria-label="Decrease font size">A&minus;</button>
         <button id="font-up-btn" class="toolbar-btn" aria-label="Increase font size">A+</button>
-      </div>
-      <div class="toolbar-group">
         <button id="mode-toggle-btn" class="toolbar-btn" aria-label="Toggle mode">Page</button>
       </div>
     </div>
@@ -443,11 +448,9 @@
       <div id="story-container"></div>
     </div>
 
-    <div id="page-indicator"></div>
-
     <div id="controls">
-      <button id="start-btn">Start Reading</button>
       <p id="status"></p>
+      <button id="start-btn">Start Reading</button>
       <button id="reset-btn" style="display:none">Start Over</button>
     </div>
   </div>

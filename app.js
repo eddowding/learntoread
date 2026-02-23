@@ -188,7 +188,7 @@ function paginate() {
   for (var i = 0; i < wordElements.length; i++) {
     var elBottom = wordElements[i].offsetTop + wordElements[i].offsetHeight;
     var pageTop = wordElements[pageStart].offsetTop;
-    if (elBottom - pageTop > wrapperHeight && i > pageStart) {
+    if (elBottom - pageTop > wrapperHeight - 2 && i > pageStart) {
       pages.push({ start: pageStart, end: i - 1 });
       pageStart = i;
     }
@@ -475,7 +475,7 @@ function matchTranscript(transcript) {
   for (let si = newStart; si < spokenWords.length; si++) {
     const spoken = spokenWords[si];
 
-    const maxSkip = 3;
+    const maxSkip = 2;
     for (let skip = 0; skip < maxSkip && currentWordIndex + skip < normalizedWords.length; skip++) {
       if (wordsMatch(spoken, normalizedWords[currentWordIndex + skip])) {
         advanceTo(currentWordIndex + skip + 1);
@@ -489,8 +489,8 @@ function matchTranscript(transcript) {
 function wordsMatch(spoken, expected) {
   if (!spoken || !expected) return false;
   if (spoken === expected) return true;
-  if (expected.length >= 4 && expected.startsWith(spoken) && spoken.length >= 3) return true;
-  if (Math.abs(spoken.length - expected.length) <= 1 && spoken.length >= 2) {
+  if (expected.length >= 4 && expected.startsWith(spoken) && spoken.length >= 3 && spoken.length >= expected.length * 0.6) return true;
+  if (Math.abs(spoken.length - expected.length) <= 1 && spoken.length >= 3 && expected.length >= 3) {
     let diffs = 0;
     const maxLen = Math.max(spoken.length, expected.length);
     for (let i = 0; i < maxLen; i++) {
@@ -589,6 +589,17 @@ function setupControls() {
   });
 
   document.getElementById('mode-toggle-btn').addEventListener('click', toggleMode);
+
+  // Re-paginate on resize (orientation change, keyboard show/hide)
+  var resizeTimer;
+  window.addEventListener('resize', function() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function() {
+      if (readingMode === 'page' && wordElements.length > 0) {
+        paginate();
+      }
+    }, 200);
+  });
 }
 
 // --- Go ---

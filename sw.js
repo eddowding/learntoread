@@ -1,4 +1,4 @@
-const CACHE_NAME = 'read-along-v3';
+const CACHE_NAME = 'read-along-v4';
 const ASSETS = [
   '/',
   '/index.html',
