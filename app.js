@@ -1,5 +1,9 @@
 // --- Story data ---
-const STORY = `The sun came up over the hill.
+const STORIES = [
+  {
+    id: 'little-cat',
+    title: 'The Little Cat',
+    text: `The sun came up over the hill.
 A little cat sat on the wall.
 The cat saw a bird in the tree.
 The bird sang a happy song.
@@ -7,7 +11,49 @@ The cat wanted to play.
 But the bird flew up high.
 So the cat went home.
 And had a long nap in the sun.
-The end.`;
+The end.`
+  },
+  {
+    id: 'brave-boat',
+    title: 'The Brave Little Boat',
+    text: `A small red boat sat by the shore.
+The waves were big and the wind was strong.
+But the little boat wanted to sail.
+It pushed out into the water.
+The waves splashed over the side.
+The boat rocked left and right.
+But it did not stop.
+It sailed past the rocks.
+It sailed past the seagulls.
+It sailed all the way to the island.
+The little boat was brave.
+And the island was beautiful.
+The end.`
+  },
+  {
+    id: 'star-collector',
+    title: 'The Star Collector',
+    text: `Every night a girl named Lily looked up at the stars.
+She wished she could hold one in her hand.
+One night a star fell from the sky.
+It landed softly in the garden.
+Lily ran outside in her slippers.
+The star was warm and glowed like gold.
+She picked it up very gently.
+It hummed a tiny song.
+Lily put the star in a glass jar.
+The jar lit up her whole room.
+The next night two more stars fell.
+Lily gave one to her brother.
+And one to the old lady next door.
+Soon everyone in the village had a star.
+The sky did not mind at all.
+It just made more.
+The end.`
+  }
+];
+
+let currentStory = null;
 
 // --- State ---
 let wordElements = [];
@@ -41,7 +87,7 @@ function renderStory() {
     container.removeChild(container.firstChild);
   }
 
-  const lines = STORY.split('\n');
+  const lines = currentStory.text.split('\n');
   wordElements = [];
   normalizedWords = [];
 
