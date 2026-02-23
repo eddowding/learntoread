@@ -122,7 +122,6 @@ let currentStory = null;
 let wordElements = [];
 let normalizedWords = [];
 let currentWordIndex = 0;
-let recognition = null;
 let isListening = false;
 let matchedSpokenCount = 0;
 
@@ -363,8 +362,275 @@ function renderStory() {
   });
 }
 
-// --- Speech Recognition ---
-let restartCount = 0;
+// --- Speech Provider Pattern ---
+let activeProvider = null;
+
+// Provider interface: { start(lang), stop(), destroy() }
+// Callbacks set on provider: onWords(words, isFinal), onError(msg), onStateChange(state)
+
+function createWebSpeechProvider() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null;
+
+  let recognition = null;
+  let restartCount = 0;
+  const provider = {
+    type: 'webspeech',
+    onWords: null,
+    onError: null,
+    onStateChange: null,
+
+    start: function(lang) {
+      recognition = new SR();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = lang || 'en-GB';
+
+      recognition.onstart = function() {
+        restartCount = 0;
+        debug('WS EVENT: onstart');
+      };
+      recognition.onaudiostart = function() { debug('WS EVENT: onaudiostart'); };
+      recognition.onspeechstart = function() { debug('WS EVENT: onspeechstart'); };
+
+      recognition.onresult = function(event) {
+        var transcript = '';
+        var isFinal = false;
+
+        for (var i = 0; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript + ' ';
+          if (event.results[i].isFinal) isFinal = true;
+        }
+
+        debug('WS RESULT (' + (isFinal ? 'final' : 'interim') + '): "' + transcript.trim() + '"');
+
+        // Convert transcript string to word objects
+        var words = transcript.trim().split(/\s+/).map(function(w) {
+          return { word: w };
+        });
+        if (provider.onWords) provider.onWords(words, isFinal);
+      };
+
+      recognition.onerror = function(event) {
+        debug('WS ERROR: ' + event.error);
+        switch (event.error) {
+          case 'not-allowed':
+            if (provider.onError) provider.onError('Microphone access denied.');
+            if (provider.onStateChange) provider.onStateChange('stopped');
+            break;
+          case 'no-speech':
+            debug('No speech detected, will auto-restart');
+            break;
+          case 'audio-capture':
+            if (provider.onError) provider.onError('Could not access microphone.');
+            if (provider.onStateChange) provider.onStateChange('stopped');
+            break;
+          case 'network':
+            if (provider.onError) provider.onError('Speech may need internet connection.');
+            break;
+          case 'aborted':
+            break;
+        }
+      };
+
+      recognition.onend = function() {
+        debug('WS EVENT: onend');
+        if (isListening && currentWordIndex < normalizedWords.length) {
+          restartCount++;
+          if (restartCount < 10) {
+            debug('Auto-restarting (' + restartCount + ')...');
+            matchedSpokenCount = 0;
+            try { recognition.start(); } catch (e) { debug('Restart failed: ' + e.message); }
+          } else {
+            if (provider.onStateChange) provider.onStateChange('paused');
+          }
+        }
+      };
+
+      try {
+        recognition.start();
+        debug('Called recognition.start()');
+      } catch (e) {
+        debug('WS START ERROR: ' + e.message);
+        if (provider.onError) provider.onError('Could not start speech recognition.');
+      }
+    },
+
+    stop: function() {
+      if (recognition) {
+        try { recognition.stop(); } catch (e) { /* ignore */ }
+      }
+    },
+
+    destroy: function() {
+      if (recognition) {
+        try { recognition.stop(); } catch (e) { /* ignore */ }
+        recognition = null;
+      }
+    }
+  };
+
+  return provider;
+}
+
+// --- Deepgram Provider ---
+var DEEPGRAM_WORKER_URL = 'wss://learntoread-speech.ed-dowding.workers.dev';
+
+function createDeepgramProvider() {
+  var ws = null;
+  var mediaRecorder = null;
+  var stream = null;
+  var keepAliveTimer = null;
+
+  var provider = {
+    type: 'deepgram',
+    onWords: null,
+    onError: null,
+    onStateChange: null,
+
+    start: function(lang) {
+      // Get microphone access
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function(audioStream) {
+        stream = audioStream;
+
+        // Build WS URL with optional keywords from story
+        var wsUrl = DEEPGRAM_WORKER_URL;
+        if (currentStory) {
+          // Extract unique words from story as keyword hints
+          var storyWords = currentStory.text.split(/\s+/).map(function(w) {
+            return w.toLowerCase().replace(/[^a-z']/g, '');
+          }).filter(function(w, i, arr) {
+            return w.length >= 4 && arr.indexOf(w) === i;
+          });
+          if (storyWords.length > 0) {
+            wsUrl += '?keywords=' + encodeURIComponent(storyWords.slice(0, 50).join(','));
+          }
+        }
+
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = function() {
+          debug('DG: WebSocket connected');
+
+          // Start MediaRecorder
+          var mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+            ? 'audio/webm;codecs=opus'
+            : 'audio/ogg;codecs=opus';
+          debug('DG: Using MIME type ' + mimeType);
+
+          mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType });
+          mediaRecorder.ondataavailable = function(event) {
+            if (event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(event.data);
+            }
+          };
+          mediaRecorder.start(250); // 250ms chunks
+
+          // KeepAlive ping every 8s
+          keepAliveTimer = setInterval(function() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'KeepAlive' }));
+            }
+          }, 8000);
+        };
+
+        ws.onmessage = function(event) {
+          try {
+            var data = JSON.parse(event.data);
+            if (data.type === 'Results' && data.channel) {
+              var alt = data.channel.alternatives[0];
+              if (alt && alt.words && alt.words.length > 0) {
+                var isFinal = data.is_final;
+                var words = alt.words.map(function(w) {
+                  return {
+                    word: w.word,
+                    start: w.start,
+                    end: w.end,
+                    confidence: w.confidence
+                  };
+                });
+                debug('DG RESULT (' + (isFinal ? 'final' : 'interim') + '): "' +
+                  words.map(function(w) { return w.word; }).join(' ') + '"');
+
+                // Deepgram sends per-utterance (not cumulative), reset matchedSpokenCount
+                matchedSpokenCount = 0;
+                if (provider.onWords) provider.onWords(words, isFinal);
+              }
+            }
+          } catch (e) {
+            debug('DG: Parse error: ' + e.message);
+          }
+        };
+
+        ws.onclose = function(event) {
+          debug('DG: WebSocket closed (' + event.code + ')');
+          cleanup();
+          if (isListening) {
+            // Auto-fallback to Web Speech
+            debug('DG: Falling back to Web Speech');
+            document.getElementById('status').textContent = 'Enhanced speech disconnected, switching to Basic...';
+            localStorage.setItem('readAlong_speechProvider', 'webspeech');
+            var sel = document.getElementById('speech-engine-select');
+            if (sel) sel.value = 'webspeech';
+            activeProvider = createWebSpeechProvider();
+            if (activeProvider) {
+              activeProvider.onWords = provider.onWords;
+              activeProvider.onError = provider.onError;
+              activeProvider.onStateChange = provider.onStateChange;
+              activeProvider.start(lang);
+            } else {
+              if (provider.onStateChange) provider.onStateChange('stopped');
+            }
+          }
+        };
+
+        ws.onerror = function() {
+          debug('DG: WebSocket error');
+        };
+
+      }).catch(function(err) {
+        debug('DG: getUserMedia error: ' + err.message);
+        if (provider.onError) provider.onError('Could not access microphone.');
+        if (provider.onStateChange) provider.onStateChange('stopped');
+      });
+    },
+
+    stop: function() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'CloseStream' }));
+      }
+      cleanup();
+    },
+
+    destroy: function() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ type: 'CloseStream' })); } catch (e) { /* ignore */ }
+      }
+      cleanup();
+    }
+  };
+
+  function cleanup() {
+    if (keepAliveTimer) {
+      clearInterval(keepAliveTimer);
+      keepAliveTimer = null;
+    }
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      try { mediaRecorder.stop(); } catch (e) { /* ignore */ }
+    }
+    mediaRecorder = null;
+    if (stream) {
+      stream.getTracks().forEach(function(t) { t.stop(); });
+      stream = null;
+    }
+    if (ws) {
+      try { ws.close(); } catch (e) { /* ignore */ }
+      ws = null;
+    }
+  }
+
+  return provider;
+}
 
 function checkSpeechSupport() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -376,80 +642,72 @@ function checkSpeechSupport() {
   return true;
 }
 
+function getSelectedProvider() {
+  var saved = localStorage.getItem('readAlong_speechProvider');
+  return saved || 'webspeech';
+}
+
 function startListening() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) return;
+  var providerType = getSelectedProvider();
 
-  recognition = new SR();
-  recognition.continuous = true;
-  recognition.interimResults = true;
-  recognition.lang = 'en-GB';
+  if (providerType === 'deepgram') {
+    activeProvider = createDeepgramProvider();
+  } else {
+    activeProvider = createWebSpeechProvider();
+  }
 
-  recognition.onstart = () => {
-    restartCount = 0;
-    debug('EVENT: onstart');
+  if (!activeProvider) {
+    document.getElementById('status').textContent = 'Speech recognition not available.';
+    return;
+  }
+
+  // Wire up provider callbacks
+  activeProvider.onWords = function(words, isFinal) {
+    matchWords(words, isFinal);
   };
-  recognition.onaudiostart = () => debug('EVENT: onaudiostart');
-  recognition.onspeechstart = () => debug('EVENT: onspeechstart');
-
-  recognition.onresult = (event) => {
-    let transcript = '';
-    let isFinal = false;
-
-    for (let i = 0; i < event.results.length; i++) {
-      transcript += event.results[i][0].transcript + ' ';
-      if (event.results[i].isFinal) isFinal = true;
-    }
-
-    debug('RESULT (' + (isFinal ? 'final' : 'interim') + '): "' + transcript.trim() + '"');
-    matchTranscript(transcript);
-  };
-
-  recognition.onerror = (event) => {
-    debug('ERROR: ' + event.error);
-    if (event.error === 'not-allowed') {
-      document.getElementById('status').textContent = 'Microphone access denied.';
+  activeProvider.onError = function(msg) {
+    document.getElementById('status').textContent = msg;
+    // For fatal errors, stop listening
+    if (msg === 'Microphone access denied.' || msg === 'Could not access microphone.') {
       isListening = false;
+      document.getElementById('skip-btn').style.display = 'none';
+      document.body.classList.remove('is-listening');
+      updateButton();
+    }
+  };
+  activeProvider.onStateChange = function(state) {
+    if (state === 'paused') {
+      document.getElementById('status').textContent = 'Recognition paused. Tap "Continue" to resume.';
+      isListening = false;
+      document.getElementById('skip-btn').style.display = 'none';
+      document.body.classList.remove('is-listening');
+      updateButton();
+    } else if (state === 'stopped') {
+      isListening = false;
+      document.getElementById('skip-btn').style.display = 'none';
+      document.body.classList.remove('is-listening');
       updateButton();
     }
   };
 
-  recognition.onend = () => {
-    debug('EVENT: onend');
-    // Auto-restart if still listening and story not finished
-    if (isListening && currentWordIndex < normalizedWords.length) {
-      restartCount++;
-      if (restartCount < 10) {
-        debug('Auto-restarting (' + restartCount + ')...');
-        matchedSpokenCount = 0;
-        try { recognition.start(); } catch (e) { debug('Restart failed: ' + e.message); }
-      } else {
-        document.getElementById('status').textContent = 'Recognition paused. Tap "Continue" to resume.';
-        isListening = false;
-        updateButton();
-      }
-    }
-  };
-
-  try {
-    recognition.start();
-    isListening = true;
-    matchedSpokenCount = 0;
-    updateButton();
-    document.getElementById('status').textContent = 'Listening... start reading aloud';
-    document.getElementById('reset-btn').style.display = 'inline-block';
-    debug('Called recognition.start()');
-  } catch (e) {
-    debug('START ERROR: ' + e.message);
-  }
+  activeProvider.start('en-GB');
+  isListening = true;
+  matchedSpokenCount = 0;
+  updateButton();
+  document.getElementById('status').textContent = 'Listening... start reading aloud';
+  document.getElementById('reset-btn').style.display = 'inline-block';
+  document.getElementById('skip-btn').style.display = 'inline-block';
+  document.body.classList.add('is-listening');
 }
 
 function stopListening() {
-  if (recognition) {
-    try { recognition.stop(); } catch (e) { /* ignore */ }
-    recognition = null;
+  if (activeProvider) {
+    activeProvider.destroy();
+    activeProvider = null;
   }
   isListening = false;
+  document.getElementById('skip-btn').style.display = 'none';
+  document.body.classList.remove('is-listening');
   updateButton();
   document.getElementById('status').textContent = currentWordIndex > 0 ? 'Paused' : '';
 }
@@ -466,23 +724,59 @@ function updateButton() {
 }
 
 // --- Word Matching ---
-function matchTranscript(transcript) {
-  const spokenWords = transcript.trim().split(/\s+/).map(normalize).filter(w => w.length > 0);
+// matchWords receives [{word, start?, end?, confidence?}] from any provider
+function matchWords(wordObjects, isFinal) {
+  // Clear tentative highlights before processing
+  clearTentative();
+
+  var spokenWords = wordObjects.map(function(w) {
+    return normalize(w.word);
+  }).filter(function(w) { return w.length > 0; });
   if (spokenWords.length === 0) return;
 
-  let newStart = matchedSpokenCount;
+  var newStart = matchedSpokenCount;
+  var lastMatchedIndex = currentWordIndex;
 
-  for (let si = newStart; si < spokenWords.length; si++) {
-    const spoken = spokenWords[si];
+  for (var si = newStart; si < spokenWords.length; si++) {
+    var spoken = spokenWords[si];
 
-    const maxSkip = 2;
-    for (let skip = 0; skip < maxSkip && currentWordIndex + skip < normalizedWords.length; skip++) {
+    // Short-word lookahead: if current word is 1-2 chars (a, I, it, etc.)
+    // and the NEXT word matches what was spoken, auto-skip the short word
+    var curExpected = normalizedWords[currentWordIndex];
+    if (curExpected && curExpected.length <= 2 && currentWordIndex + 1 < normalizedWords.length) {
+      if (wordsMatch(spoken, normalizedWords[currentWordIndex + 1])) {
+        debug('SHORT-SKIP: "' + curExpected + '" (1-2 char), spoken matches next word');
+        advanceTo(currentWordIndex + 2);
+        matchedSpokenCount = si + 1;
+        lastMatchedIndex = currentWordIndex;
+        continue;
+      }
+    }
+
+    var maxSkip = 2;
+    for (var skip = 0; skip < maxSkip && currentWordIndex + skip < normalizedWords.length; skip++) {
       if (wordsMatch(spoken, normalizedWords[currentWordIndex + skip])) {
         advanceTo(currentWordIndex + skip + 1);
         matchedSpokenCount = si + 1;
+        lastMatchedIndex = currentWordIndex;
         break;
       }
     }
+  }
+
+  // For interim results from Deepgram, show tentative highlight on next expected words
+  if (!isFinal && activeProvider && activeProvider.type === 'deepgram') {
+    var tentativeCount = Math.min(spokenWords.length - matchedSpokenCount, 3);
+    for (var t = 0; t < tentativeCount && currentWordIndex + t < wordElements.length; t++) {
+      wordElements[currentWordIndex + t].classList.add('tentative');
+    }
+  }
+}
+
+function clearTentative() {
+  var tentatives = document.querySelectorAll('.word.tentative');
+  for (var i = 0; i < tentatives.length; i++) {
+    tentatives[i].classList.remove('tentative');
   }
 }
 
@@ -504,7 +798,7 @@ function wordsMatch(spoken, expected) {
 
 function advanceTo(newIndex) {
   for (var i = currentWordIndex; i < newIndex && i < wordElements.length; i++) {
-    wordElements[i].classList.remove('upcoming', 'current');
+    wordElements[i].classList.remove('upcoming', 'current', 'tentative');
     wordElements[i].classList.add('spoken');
   }
   currentWordIndex = newIndex;
@@ -580,6 +874,25 @@ function setupControls() {
     document.getElementById('reset-btn').style.display = 'none';
   });
 
+  document.getElementById('skip-btn').addEventListener('click', function() {
+    if (isListening && currentWordIndex < normalizedWords.length) {
+      debug('SKIP: word "' + normalizedWords[currentWordIndex] + '"');
+      advanceTo(currentWordIndex + 1);
+    }
+  });
+
+  // Tappable words — tap to advance to that word
+  document.getElementById('story-container').addEventListener('click', function(e) {
+    if (!isListening) return;
+    var target = e.target;
+    if (!target.classList.contains('word') || !target.classList.contains('upcoming')) return;
+    var idx = wordElements.indexOf(target);
+    if (idx >= 0 && idx >= currentWordIndex) {
+      debug('TAP: advance to word ' + idx + ' "' + normalizedWords[idx] + '"');
+      advanceTo(idx + 1);
+    }
+  });
+
   document.getElementById('font-down-btn').addEventListener('click', function() {
     if (fontSizeIndex > 0) { fontSizeIndex--; applyFontSize(); }
   });
@@ -589,6 +902,40 @@ function setupControls() {
   });
 
   document.getElementById('mode-toggle-btn').addEventListener('click', toggleMode);
+
+  // Settings panel toggle
+  var settingsBtn = document.getElementById('settings-btn');
+  var settingsPanel = document.getElementById('settings-panel');
+  settingsBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    settingsPanel.classList.toggle('open');
+  });
+  document.addEventListener('click', function(e) {
+    if (!settingsPanel.contains(e.target) && e.target !== settingsBtn) {
+      settingsPanel.classList.remove('open');
+    }
+  });
+
+  // Speech engine selector
+  var engineSelect = document.getElementById('speech-engine-select');
+  var savedProvider = localStorage.getItem('readAlong_speechProvider') || 'webspeech';
+  engineSelect.value = savedProvider;
+
+  // Only show Enhanced option if getUserMedia is available
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    var dgOption = engineSelect.querySelector('option[value="deepgram"]');
+    if (dgOption) dgOption.disabled = true;
+  }
+
+  engineSelect.addEventListener('change', function() {
+    localStorage.setItem('readAlong_speechProvider', engineSelect.value);
+    settingsPanel.classList.remove('open');
+    // If currently listening, restart with new provider
+    if (isListening) {
+      stopListening();
+      startListening();
+    }
+  });
 
   // Re-paginate on resize (orientation change, keyboard show/hide)
   var resizeTimer;
