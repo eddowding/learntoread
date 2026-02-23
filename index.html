@@ -184,7 +184,6 @@
       box-shadow: 0 2px 20px rgba(0,0,0,0.08);
       line-height: 2.4;
       font-size: 1.5rem;
-      margin-bottom: 1rem;
       align-self: flex-start;
     }
 
@@ -197,20 +196,66 @@
     }
 
     /* --- Teleprompter mode --- */
+    body.teleprompter-mode {
+      background: #0d0d1a;
+    }
+
+    body.teleprompter-mode #toolbar {
+      background: #0d0d1a;
+    }
+
+    body.teleprompter-mode .toolbar-btn {
+      color: #999;
+      border-color: #333;
+    }
+
+    body.teleprompter-mode #story-title {
+      color: #5a9fd4;
+    }
+
+    body.teleprompter-mode #controls {
+      background: #0d0d1a;
+    }
+
+    body.teleprompter-mode #status {
+      color: #666;
+    }
+
     body.teleprompter-mode #page-wrapper {
       overflow-y: auto;
-      height: calc(100dvh - 60px - 130px - 50px - 20px);
+      overflow-x: hidden;
+      /* Narrow reading window — like a real teleprompter lens */
+      flex: none;
+      height: 40vh;
+      margin: auto 1rem;
       background: #1a1a2e;
       border-radius: 12px;
-      padding: 2rem;
-      mask-image: linear-gradient(transparent, black 15%, black 85%, transparent);
-      -webkit-mask-image: linear-gradient(transparent, black 15%, black 85%, transparent);
+      /* Strong fade: only the center ~30% is fully visible */
+      mask-image: linear-gradient(
+        transparent 0%,
+        transparent 10%,
+        black 35%,
+        black 65%,
+        transparent 90%,
+        transparent 100%
+      );
+      -webkit-mask-image: linear-gradient(
+        transparent 0%,
+        transparent 10%,
+        black 35%,
+        black 65%,
+        transparent 90%,
+        transparent 100%
+      );
     }
 
     body.teleprompter-mode #story-container {
       background: transparent;
       box-shadow: none;
       color: #e0e0e0;
+      /* Large padding so first/last lines can reach the center of the window */
+      padding-top: 20vh;
+      padding-bottom: 20vh;
     }
 
     body.teleprompter-mode #page-indicator {
@@ -218,12 +263,18 @@
     }
 
     body.teleprompter-mode .word.upcoming {
-      color: #e0e0e0;
+      color: rgba(224, 224, 224, 0.5);
     }
 
     body.teleprompter-mode .word.spoken {
-      background: rgba(74,144,217,0.3);
+      background: rgba(74, 144, 217, 0.3);
       color: #7ec8e3;
+    }
+
+    /* The current word (next to be spoken) - bright highlight */
+    body.teleprompter-mode .word.current {
+      color: #ffffff;
+      text-shadow: 0 0 8px rgba(74, 144, 217, 0.6);
     }
 
     /* --- Page mode --- */
@@ -236,6 +287,9 @@
       box-shadow: 2px 2px 8px rgba(0,0,0,0.06), inset 0 0 40px rgba(0,0,0,0.02);
       padding: 2rem 2.5rem;
       overflow: hidden;
+      /* Constrain height so stories span multiple pages */
+      flex: none;
+      height: 45vh;
     }
 
     /* --- Page turn animation --- */

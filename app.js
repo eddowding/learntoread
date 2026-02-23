@@ -505,10 +505,18 @@ function wordsMatch(spoken, expected) {
 
 function advanceTo(newIndex) {
   for (var i = currentWordIndex; i < newIndex && i < wordElements.length; i++) {
-    wordElements[i].classList.remove('upcoming');
+    wordElements[i].classList.remove('upcoming', 'current');
     wordElements[i].classList.add('spoken');
   }
   currentWordIndex = newIndex;
+
+  // Mark the current word (next to be spoken) for teleprompter highlight
+  if (currentWordIndex < wordElements.length) {
+    // Remove previous current marker
+    var prevCurrent = document.querySelector('.word.current');
+    if (prevCurrent) prevCurrent.classList.remove('current');
+    wordElements[currentWordIndex].classList.add('current');
+  }
 
   if (currentWordIndex < wordElements.length) {
     if (readingMode === 'teleprompter') {
