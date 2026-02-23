@@ -72,6 +72,10 @@ let recognition = null;
 let isListening = false;
 let matchedSpokenCount = 0;
 
+// --- Pagination state ---
+let pages = [];
+let currentPage = 0;
+
 // --- Debug ---
 function debug(msg) {
   const el = document.getElementById('debug');
@@ -104,6 +108,82 @@ function scrollToCenter(el) {
   var wrapperRect = wrapper.getBoundingClientRect();
   var targetScroll = wrapper.scrollTop + (elRect.top - wrapperRect.top) - (wrapperRect.height / 2) + (elRect.height / 2);
   wrapper.scrollTo({ top: targetScroll, behavior: 'smooth' });
+}
+
+// --- Pagination (page mode) ---
+function paginate() {
+  var wrapper = document.getElementById('page-wrapper');
+  var wrapperHeight = wrapper.clientHeight;
+  if (wrapperHeight <= 0) return;
+
+  pages = [];
+  var pageStart = 0;
+
+  // Show all words to measure
+  wordElements.forEach(function(el) { el.style.display = ''; });
+  document.querySelectorAll('.sentence-break').forEach(function(el) { el.style.display = ''; });
+
+  for (var i = 0; i < wordElements.length; i++) {
+    var elBottom = wordElements[i].offsetTop + wordElements[i].offsetHeight;
+    var pageTop = wordElements[pageStart].offsetTop;
+    if (elBottom - pageTop > wrapperHeight && i > pageStart) {
+      pages.push({ start: pageStart, end: i - 1 });
+      pageStart = i;
+    }
+  }
+  pages.push({ start: pageStart, end: wordElements.length - 1 });
+
+  // Find which page contains currentWordIndex
+  var targetPage = 0;
+  for (var p = 0; p < pages.length; p++) {
+    if (currentWordIndex >= pages[p].start && currentWordIndex <= pages[p].end) {
+      targetPage = p;
+      break;
+    }
+  }
+
+  showPage(targetPage);
+}
+
+function showPage(pageNum) {
+  if (pageNum < 0 || pageNum >= pages.length) return;
+  currentPage = pageNum;
+  var page = pages[pageNum];
+  wordElements.forEach(function(el, i) {
+    el.style.display = (i >= page.start && i <= page.end) ? '' : 'none';
+  });
+  // Also handle sentence breaks - show only those between visible words
+  document.querySelectorAll('.sentence-break').forEach(function(br) {
+    var prev = br.previousElementSibling;
+    var next = br.nextElementSibling;
+    if (prev && next && prev.style.display !== 'none' && next.style.display !== 'none') {
+      br.style.display = '';
+    } else {
+      br.style.display = 'none';
+    }
+  });
+  updatePageIndicator();
+}
+
+function updatePageIndicator() {
+  var indicator = document.getElementById('page-indicator');
+  if (pages.length > 1) {
+    indicator.textContent = 'Page ' + (currentPage + 1) + ' of ' + pages.length;
+    indicator.style.display = '';
+  } else {
+    indicator.style.display = 'none';
+  }
+}
+
+function triggerPageTurn(nextPage) {
+  var container = document.getElementById('story-container');
+  container.classList.add('page-turning-out');
+  setTimeout(function() {
+    showPage(nextPage);
+    container.classList.remove('page-turning-out');
+    container.classList.add('page-turning-in');
+    setTimeout(function() { container.classList.remove('page-turning-in'); }, 300);
+  }, 300);
 }
 
 // --- Screen navigation ---
