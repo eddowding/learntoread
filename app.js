@@ -74,9 +74,55 @@ function normalize(word) {
   return word.toLowerCase().replace(/[^a-z']/g, '');
 }
 
+// --- Screen navigation ---
+function showScreen(screenId) {
+  document.querySelectorAll('.screen').forEach(function(s) {
+    s.classList.remove('active');
+  });
+  document.getElementById(screenId).classList.add('active');
+}
+
+function renderStoryList() {
+  var list = document.getElementById('story-list');
+  list.textContent = '';
+
+  STORIES.forEach(function(story) {
+    var card = document.createElement('button');
+    card.classList.add('story-card');
+
+    var titleSpan = document.createElement('span');
+    titleSpan.classList.add('story-card-title');
+    titleSpan.textContent = story.title;
+    card.appendChild(titleSpan);
+
+    var previewSpan = document.createElement('span');
+    previewSpan.classList.add('story-card-preview');
+    previewSpan.textContent = story.text.split('\n')[0];
+    card.appendChild(previewSpan);
+
+    card.addEventListener('click', function() {
+      selectStory(story);
+    });
+    list.appendChild(card);
+  });
+}
+
+function selectStory(story) {
+  currentStory = story;
+  document.getElementById('story-title').textContent = story.title;
+  currentWordIndex = 0;
+  matchedSpokenCount = 0;
+  renderStory();
+  updateButton();
+  document.getElementById('start-btn').style.display = '';
+  document.getElementById('reset-btn').style.display = 'none';
+  document.getElementById('status').textContent = '';
+  showScreen('reading-screen');
+}
+
 // --- Initialization ---
 function init() {
-  renderStory();
+  renderStoryList();
   setupControls();
   checkSpeechSupport();
 }
@@ -266,7 +312,12 @@ function storyComplete() {
 
 // --- Controls ---
 function setupControls() {
-  document.getElementById('start-btn').addEventListener('click', () => {
+  document.getElementById('back-btn').addEventListener('click', function() {
+    stopListening();
+    showScreen('selection-screen');
+  });
+
+  document.getElementById('start-btn').addEventListener('click', function() {
     if (isListening) {
       stopListening();
     } else {
@@ -274,7 +325,7 @@ function setupControls() {
     }
   });
 
-  document.getElementById('reset-btn').addEventListener('click', () => {
+  document.getElementById('reset-btn').addEventListener('click', function() {
     stopListening();
     currentWordIndex = 0;
     matchedSpokenCount = 0;
