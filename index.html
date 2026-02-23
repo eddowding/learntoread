@@ -391,5 +391,10 @@
   <pre id="debug" style="max-width:600px;width:100%;font-size:0.75rem;color:#999;margin-top:1rem;white-space:pre-wrap;word-break:break-all;padding:0.5rem;"></pre>
 
   <script src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js');
+    }
+  </script>
 </body>
 </html>
