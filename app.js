@@ -464,11 +464,15 @@ function storyComplete() {
   document.getElementById('status').textContent = '';
   document.getElementById('start-btn').style.display = 'none';
 
-  const container = document.getElementById('story-container');
-  const msg = document.createElement('div');
+  var container = document.getElementById('story-container');
+  var msg = document.createElement('div');
   msg.classList.add('done-message');
   msg.textContent = 'Well done! You read the whole story!';
   container.appendChild(msg);
+
+  if (readingMode === 'teleprompter') {
+    scrollToCenter(msg);
+  }
 }
 
 // --- Controls ---
@@ -490,10 +494,13 @@ function setupControls() {
     stopListening();
     currentWordIndex = 0;
     matchedSpokenCount = 0;
+    currentPage = 0;
+    pages = [];
     renderStory();
     applyFontSize();
     applyMode();
     updateButton();
+    document.getElementById('start-btn').style.display = '';
     document.getElementById('status').textContent = '';
     document.getElementById('reset-btn').style.display = 'none';
   });
