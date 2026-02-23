@@ -53,6 +53,15 @@ The end.`
   }
 ];
 
+// --- Font size presets ---
+const FONT_SIZES = [
+  { label: 'S', size: '1.2rem', lineHeight: '2.2' },
+  { label: 'M', size: '1.5rem', lineHeight: '2.4' },
+  { label: 'L', size: '1.9rem', lineHeight: '2.6' },
+  { label: 'XL', size: '2.4rem', lineHeight: '2.8' }
+];
+let fontSizeIndex = 1; // default M
+
 let currentStory = null;
 
 // --- State ---
@@ -72,6 +81,20 @@ function debug(msg) {
 
 function normalize(word) {
   return word.toLowerCase().replace(/[^a-z']/g, '');
+}
+
+// --- Font size ---
+function applyFontSize() {
+  var fs = FONT_SIZES[fontSizeIndex];
+  var container = document.getElementById('story-container');
+  container.style.fontSize = fs.size;
+  container.style.lineHeight = fs.lineHeight;
+  localStorage.setItem('readAlong_fontSize', fontSizeIndex);
+}
+
+function loadPreferences() {
+  var savedSize = localStorage.getItem('readAlong_fontSize');
+  if (savedSize !== null) fontSizeIndex = parseInt(savedSize, 10);
 }
 
 // --- Screen navigation ---
@@ -113,6 +136,7 @@ function selectStory(story) {
   currentWordIndex = 0;
   matchedSpokenCount = 0;
   renderStory();
+  applyFontSize();
   updateButton();
   document.getElementById('start-btn').style.display = '';
   document.getElementById('reset-btn').style.display = 'none';
@@ -122,6 +146,7 @@ function selectStory(story) {
 
 // --- Initialization ---
 function init() {
+  loadPreferences();
   renderStoryList();
   setupControls();
   checkSpeechSupport();
@@ -330,9 +355,18 @@ function setupControls() {
     currentWordIndex = 0;
     matchedSpokenCount = 0;
     renderStory();
+    applyFontSize();
     updateButton();
     document.getElementById('status').textContent = '';
     document.getElementById('reset-btn').style.display = 'none';
+  });
+
+  document.getElementById('font-down-btn').addEventListener('click', function() {
+    if (fontSizeIndex > 0) { fontSizeIndex--; applyFontSize(); }
+  });
+
+  document.getElementById('font-up-btn').addEventListener('click', function() {
+    if (fontSizeIndex < FONT_SIZES.length - 1) { fontSizeIndex++; applyFontSize(); }
   });
 }
 
