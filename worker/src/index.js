@@ -1,30 +1,83 @@
-// Cloudflare Worker: WebSocket proxy for Deepgram speech-to-text
-// 1:1 proxy — client <-> Deepgram, API key stays server-side
+// Cloudflare Worker: speech proxy + temporary key endpoint for Deepgram
+// Two modes:
+//   GET /token  — creates a short-lived Deepgram API key for direct browser connection
+//   WSS /       — 1:1 WebSocket proxy (fallback), accepts encoding params from client
 
 export default {
   async fetch(request, env) {
+    const url = new URL(request.url);
+    const origin = request.headers.get('Origin') || '';
+    const allowed = (env.ALLOWED_ORIGIN || '').split(',').map(s => s.trim());
+    const originAllowed = allowed.includes(origin) || origin.includes('localhost');
+
     // CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        headers: corsHeaders(env),
-      });
+      return new Response(null, { headers: corsHeaders(origin) });
     }
 
-    // Only accept WebSocket upgrades
+    // --- Token endpoint: create short-lived Deepgram key ---
+    if (url.pathname === '/token' && request.method === 'GET') {
+      if (!originAllowed) {
+        return new Response('Forbidden', { status: 403 });
+      }
+
+      try {
+        // Get project ID from Deepgram
+        const projRes = await fetch('https://api.deepgram.com/v1/projects', {
+          headers: { 'Authorization': 'Token ' + env.DEEPGRAM_API_KEY }
+        });
+        if (!projRes.ok) throw new Error('Failed to list projects: ' + projRes.status);
+        const projData = await projRes.json();
+        const projectId = projData.projects && projData.projects[0] && projData.projects[0].project_id;
+        if (!projectId) throw new Error('No Deepgram project found');
+
+        // Create temporary key (2 minutes)
+        const keyRes = await fetch('https://api.deepgram.com/v1/keys/' + projectId, {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Token ' + env.DEEPGRAM_API_KEY,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            comment: 'learntoread-session',
+            scopes: ['usage:write'],
+            time_to_live_in_seconds: 120
+          })
+        });
+        if (!keyRes.ok) throw new Error('Failed to create temp key: ' + keyRes.status);
+        const keyData = await keyRes.json();
+
+        return new Response(JSON.stringify({ key: keyData.key }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': origin,
+            'Cache-Control': 'no-store'
+          }
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': origin
+          }
+        });
+      }
+    }
+
+    // --- WebSocket proxy ---
     if (request.headers.get('Upgrade') !== 'websocket') {
       return new Response('Expected WebSocket', { status: 426 });
     }
 
-    // Origin check
-    const origin = request.headers.get('Origin') || '';
-    const allowed = (env.ALLOWED_ORIGIN || '').split(',').map(s => s.trim());
-    if (!allowed.includes(origin) && !origin.includes('localhost')) {
+    if (!originAllowed) {
       return new Response('Forbidden', { status: 403 });
     }
 
-    // Parse query params for Deepgram options
-    const url = new URL(request.url);
+    // Read client-specified params
     const keywords = url.searchParams.get('keywords') || '';
+    const clientEncoding = url.searchParams.get('encoding');
+    const clientSampleRate = url.searchParams.get('sample_rate');
 
     // Build Deepgram URL
     const dgParams = new URLSearchParams({
@@ -32,10 +85,19 @@ export default {
       language: 'en-GB',
       punctuate: 'false',
       interim_results: 'true',
-      encoding: 'opus',
-      container: 'webm',
       smart_format: 'false',
     });
+
+    // Use client-specified encoding (AudioWorklet PCM) or default (MediaRecorder opus)
+    if (clientEncoding === 'linear16') {
+      dgParams.set('encoding', 'linear16');
+      dgParams.set('sample_rate', clientSampleRate || '48000');
+      dgParams.set('channels', '1');
+    } else {
+      dgParams.set('encoding', 'opus');
+      dgParams.set('container', 'webm');
+    }
+
     if (keywords) {
       keywords.split(',').forEach(kw => dgParams.append('keywords', kw.trim()));
     }
@@ -75,7 +137,6 @@ export default {
     // Handle close from either side
     server.addEventListener('close', () => {
       try {
-        // Send CloseStream to Deepgram for graceful shutdown
         if (dgSocket.readyState === WebSocket.OPEN) {
           dgSocket.send(JSON.stringify({ type: 'CloseStream' }));
           dgSocket.close();
@@ -103,9 +164,9 @@ export default {
   },
 };
 
-function corsHeaders(env) {
+function corsHeaders(origin) {
   return {
-    'Access-Control-Allow-Origin': env.ALLOWED_ORIGIN || '*',
+    'Access-Control-Allow-Origin': origin || '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Upgrade, Connection, Sec-WebSocket-Key, Sec-WebSocket-Version, Sec-WebSocket-Protocol',
   };

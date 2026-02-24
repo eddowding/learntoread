@@ -1,8 +1,9 @@
-const CACHE_NAME = 'read-along-v6';
+const CACHE_NAME = 'read-along-v7';
 const ASSETS = [
   '/',
   '/index.html',
   '/app.js',
+  '/audio-processor.js',
   '/manifest.json',
   '/icon-192.svg',
   '/icon-512.svg'

@@ -474,10 +474,29 @@ function createWebSpeechProvider() {
 }
 
 // --- Deepgram Provider ---
+// Three optimisations for lowest latency:
+//   1. AudioWorklet sends raw PCM (~43ms buffer) instead of MediaRecorder (~250ms)
+//   2. Direct Deepgram connection via temporary key (skips proxy Worker hop)
+//   3. MediaRecorder fallback uses 100ms chunks (down from 250ms)
+// Graceful degradation: AudioWorklet+direct → AudioWorklet+proxy → MediaRecorder+direct → MediaRecorder+proxy
+
 var DEEPGRAM_WORKER_URL = 'wss://learntoread-speech.westtytherley.workers.dev';
+var DEEPGRAM_TOKEN_URL = DEEPGRAM_WORKER_URL.replace('wss://', 'https://') + '/token';
+
+function getStoryKeywords() {
+  if (!currentStory) return [];
+  return currentStory.text.split(/\s+/).map(function(w) {
+    return w.toLowerCase().replace(/[^a-z']/g, '');
+  }).filter(function(w, i, arr) {
+    return w.length >= 4 && arr.indexOf(w) === i;
+  }).slice(0, 50);
+}
 
 function createDeepgramProvider() {
   var ws = null;
+  var audioContext = null;
+  var workletNode = null;
+  var silentGain = null;
   var mediaRecorder = null;
   var stream = null;
   var keepAliveTimer = null;
@@ -488,43 +507,120 @@ function createDeepgramProvider() {
     onError: null,
     onStateChange: null,
 
-    start: function(lang) {
-      // Get microphone access
-      navigator.mediaDevices.getUserMedia({ audio: true }).then(function(audioStream) {
-        stream = audioStream;
+    start: async function(lang) {
+      try {
+        // Step 1: Get microphone
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-        // Build WS URL with optional keywords from story
-        var wsUrl = DEEPGRAM_WORKER_URL;
-        if (currentStory) {
-          // Extract unique words from story as keyword hints
-          var storyWords = currentStory.text.split(/\s+/).map(function(w) {
-            return w.toLowerCase().replace(/[^a-z']/g, '');
-          }).filter(function(w, i, arr) {
-            return w.length >= 4 && arr.indexOf(w) === i;
-          });
-          if (storyWords.length > 0) {
-            wsUrl += '?keywords=' + encodeURIComponent(storyWords.slice(0, 50).join(','));
+        // Step 2: Try to get temporary key for direct Deepgram connection
+        var tempKey = null;
+        try {
+          var tokenRes = await fetch(DEEPGRAM_TOKEN_URL);
+          if (tokenRes.ok) {
+            var tokenData = await tokenRes.json();
+            tempKey = tokenData.key;
+            debug('DG: Got temp key, will use direct connection');
+          }
+        } catch (e) {
+          debug('DG: Token fetch failed (' + e.message + '), will use proxy');
+        }
+
+        // Step 3: Try AudioWorklet for lowest-latency audio capture
+        var useWorklet = false;
+        try {
+          audioContext = new AudioContext();
+          await audioContext.audioWorklet.addModule('/audio-processor.js');
+          useWorklet = true;
+          debug('DG: AudioWorklet ready (sample rate ' + audioContext.sampleRate + ')');
+        } catch (e) {
+          debug('DG: AudioWorklet unavailable (' + e.message + '), using MediaRecorder');
+          if (audioContext) {
+            try { audioContext.close(); } catch (_) {}
+            audioContext = null;
           }
         }
 
-        ws = new WebSocket(wsUrl);
+        // Step 4: Build WebSocket URL
+        var wsUrl;
+        var keywords = getStoryKeywords();
+
+        if (tempKey) {
+          // Direct connection to Deepgram
+          var dgParams = new URLSearchParams({
+            model: 'nova-2',
+            language: 'en-GB',
+            punctuate: 'false',
+            interim_results: 'true',
+            smart_format: 'false',
+          });
+          if (useWorklet) {
+            dgParams.set('encoding', 'linear16');
+            dgParams.set('sample_rate', String(audioContext.sampleRate));
+            dgParams.set('channels', '1');
+          } else {
+            dgParams.set('encoding', 'opus');
+            dgParams.set('container', 'webm');
+          }
+          keywords.forEach(function(kw) { dgParams.append('keywords', kw); });
+          wsUrl = 'wss://api.deepgram.com/v1/listen?' + dgParams.toString();
+        } else {
+          // Proxy connection through Worker
+          var proxyParams = new URLSearchParams();
+          if (useWorklet) {
+            proxyParams.set('encoding', 'linear16');
+            proxyParams.set('sample_rate', String(audioContext.sampleRate));
+          }
+          if (keywords.length > 0) {
+            proxyParams.set('keywords', keywords.join(','));
+          }
+          var qs = proxyParams.toString();
+          wsUrl = DEEPGRAM_WORKER_URL + (qs ? '?' + qs : '');
+        }
+
+        // Step 5: Connect WebSocket
+        var mode = (tempKey ? 'direct' : 'proxy') + '+' + (useWorklet ? 'worklet' : 'mediarecorder');
+        debug('DG: Connecting (' + mode + ')');
+
+        if (tempKey) {
+          ws = new WebSocket(wsUrl, ['token', tempKey]);
+        } else {
+          ws = new WebSocket(wsUrl);
+        }
 
         ws.onopen = function() {
-          debug('DG: WebSocket connected');
+          debug('DG: Connected (' + mode + ')');
 
-          // Start MediaRecorder
-          var mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-            ? 'audio/webm;codecs=opus'
-            : 'audio/ogg;codecs=opus';
-          debug('DG: Using MIME type ' + mimeType);
-
-          mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType });
-          mediaRecorder.ondataavailable = function(event) {
-            if (event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
-              ws.send(event.data);
-            }
-          };
-          mediaRecorder.start(250); // 250ms chunks
+          if (useWorklet) {
+            // AudioWorklet path — raw PCM, ~43ms buffer
+            var source = audioContext.createMediaStreamSource(stream);
+            workletNode = new AudioWorkletNode(audioContext, 'pcm-processor', {
+              processorOptions: { bufferSize: 2048 }
+            });
+            workletNode.port.onmessage = function(event) {
+              if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(event.data);
+              }
+            };
+            source.connect(workletNode);
+            // Keep audio graph alive without audible output
+            silentGain = audioContext.createGain();
+            silentGain.gain.value = 0;
+            workletNode.connect(silentGain);
+            silentGain.connect(audioContext.destination);
+          } else {
+            // MediaRecorder fallback — 100ms chunks (down from 250ms)
+            var mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+              ? 'audio/webm;codecs=opus'
+              : 'audio/ogg;codecs=opus';
+            debug('DG: MediaRecorder ' + mimeType + ', 100ms chunks');
+            mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType });
+            mediaRecorder.ondataavailable = function(event) {
+              if (event.data.size > 0 && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(event.data);
+              }
+            };
+            mediaRecorder.start(100);
+          }
 
           // KeepAlive ping every 8s
           keepAliveTimer = setInterval(function() {
@@ -552,7 +648,6 @@ function createDeepgramProvider() {
                 debug('DG RESULT (' + (isFinal ? 'final' : 'interim') + '): "' +
                   words.map(function(w) { return w.word; }).join(' ') + '"');
 
-                // Deepgram sends per-utterance (not cumulative), reset matchedSpokenCount
                 matchedSpokenCount = 0;
                 if (provider.onWords) provider.onWords(words, isFinal);
               }
@@ -588,11 +683,11 @@ function createDeepgramProvider() {
           debug('DG: WebSocket error');
         };
 
-      }).catch(function(err) {
-        debug('DG: getUserMedia error: ' + err.message);
+      } catch (err) {
+        debug('DG: Start error: ' + err.message);
         if (provider.onError) provider.onError('Could not access microphone.');
         if (provider.onStateChange) provider.onStateChange('stopped');
-      });
+      }
     },
 
     stop: function() {
@@ -614,6 +709,18 @@ function createDeepgramProvider() {
     if (keepAliveTimer) {
       clearInterval(keepAliveTimer);
       keepAliveTimer = null;
+    }
+    if (workletNode) {
+      try { workletNode.disconnect(); } catch (e) { /* ignore */ }
+      workletNode = null;
+    }
+    if (silentGain) {
+      try { silentGain.disconnect(); } catch (e) { /* ignore */ }
+      silentGain = null;
+    }
+    if (audioContext) {
+      try { audioContext.close(); } catch (e) { /* ignore */ }
+      audioContext = null;
     }
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       try { mediaRecorder.stop(); } catch (e) { /* ignore */ }
